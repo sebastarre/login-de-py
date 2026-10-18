@@ -1,12 +1,8 @@
 # Al Revés
 
-Juego para un solo celular (se pasan el teléfono). Es una web app instalable (PWA), sin dependencias ni build.
+Grabá una palabra con el micrófono, escuchala normal y escuchala al revés. Los turnos los manejan los jugadores entre sí. Es una web app instalable (PWA), sin dependencias ni build.
 
-1. Un jugador graba una palabra (y la escribe, solo para verificar al final).
-2. El siguiente la escucha **al revés** y se graba imitando exactamente lo que oyó.
-3. Esa imitación se reproduce **al revés** y tiene que adivinar la palabra original. Acierta = +1 punto.
-
-Los roles rotan cada ronda (2 a 6 jugadores).
+Botones: **Grabar** (o **Volver a grabar**), **Escuchar** y **Escuchar al revés**.
 
 ## Probar
 
