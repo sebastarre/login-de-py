@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14121f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Al Revés">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<title>Al Revés</title>
+<style>
+:root {
+  --bg: #14121f;
+  --surface: #1f1c30;
+  --surface-2: #2a2640;
+  --text: #f3f1fb;
+  --muted: #a9a4c4;
+  --accent: #ff6b9a;
+  --accent-ink: #2a0d18;
+  --good: #4ade80;
+  --bad: #fb7185;
+  --border: #38335a;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f4ff;
+    --surface: #ffffff;
+    --surface-2: #ece9fb;
+    --text: #1d1a33;
+    --muted: #605b82;
+    --accent: #d6336c;
+    --accent-ink: #ffffff;
+    --good: #15803d;
+    --bad: #be123c;
+    --border: #d9d4f3;
+  }
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+#app {
+  min-height: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 24px 16px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+h1 { font-size: 34px; margin: 8px 0 0; letter-spacing: -0.5px; }
+h2 { font-size: 24px; margin: 0; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.center { text-align: center; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.spacer { flex: 1; }
+button, input {
+  font: inherit;
+  color: inherit;
+}
+button {
+  border: 0;
+  border-radius: 14px;
+  padding: 14px 18px;
+  background: var(--surface-2);
+  cursor: pointer;
+  min-height: 52px;
+}
+button:active { transform: scale(.98); }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+button.ghost { background: transparent; border: 1px solid var(--border); }
+button.small { min-height: 40px; padding: 8px 12px; }
+button.playing { outline: 3px solid var(--accent); }
+input[type="text"] {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  min-height: 52px;
+}
+input[type="text"]:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row > input { flex: 1; }
+.rec {
+  width: 128px; height: 128px; border-radius: 50%;
+  margin: 8px auto;
+  background: var(--accent); color: var(--accent-ink);
+  font-weight: 700; font-size: 16px;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  padding: 0;
+}
+.rec.on { background: var(--bad); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 14px color-mix(in srgb, var(--bad) 25%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .rec.on { animation: none; } }
+.meter { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.meter > div { height: 100%; width: 0; background: var(--accent); transition: width .08s linear; }
+.big-word { font-size: 40px; font-weight: 800; text-align: center; word-break: break-word; }
+.verdict { font-size: 22px; font-weight: 700; text-align: center; }
+.verdict.ok { color: var(--good); }
+.verdict.no { color: var(--bad); }
+table { width: 100%; border-collapse: collapse; }
+td { padding: 6px 0; border-bottom: 1px solid var(--border); }
+td:last-child { text-align: right; font-weight: 700; }
+.step { color: var(--muted); font-size: 14px; text-transform: uppercase; letter-spacing: .08em; }
+.err { color: var(--bad); font-size: 15px; }
+</style>
+</head>
+<body>
+<main id="app"></main>
+
+<script>
+'use strict';
+
+// ---------- Audio ----------
+let ctx = null;
+function audioCtx() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') ctx.resume();
+  return ctx;
+}
+
+function decode(arrayBuffer) {
+  const c = audioCtx();
+  return new Promise((resolve, reject) => {
+    const p = c.decodeAudioData(arrayBuffer, resolve, reject);
+    if (p && p.then) p.then(resolve, reject);
+  });
+}
+
+function copyBuffer(buf, transform) {
+  const out = audioCtx().createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    out.getChannelData(ch).set(transform(buf.getChannelData(ch)));
+  }
+  return out;
+}
+
+function reverse(buf) {
+  return copyBuffer(buf, (data) => Float32Array.from(data).reverse());
+}
+
+// Recorta silencio al inicio y al final para que el reverso arranque enseguida.
+function trim(buf) {
+  const n = buf.length;
+  let peak = 0;
+  const chans = [];
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) chans.push(buf.getChannelData(ch));
+  for (const d of chans) for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(d[i]));
+  if (peak < 0.01) return buf;
+  const th = peak * 0.08;
+  const loud = (i) => chans.some((d) => Math.abs(d[i]) > th);
+  let s = 0, e = n - 1;
+  while (s < n && !loud(s)) s++;
+  while (e > s && !loud(e)) e--;
+  const pad = Math.round(buf.sampleRate * 0.08);
+  s = Math.max(0, s - pad);
+  e = Math.min(n - 1, e + pad);
+  const out = audioCtx().createBuffer(buf.numberOfChannels, e - s + 1, buf.sampleRate);
+  chans.forEach((d, ch) => out.getChannelData(ch).set(d.subarray(s, e + 1)));
+  return out;
+}
+
+let current = null; // { src, el }
+function stopPlayback() {
+  if (!current) return;
+  const { src, el } = current;
+  current = null;
+  src.onended = null;
+  try { src.stop(); } catch (_) {}
+  if (el) el.classList.remove('playing');
+}
+
+function play(buf, el) {
+  const wasThis = current && current.el === el;
+  stopPlayback();
+  if (wasThis) return;
+  const c = audioCtx();
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  src.connect(c.destination);
+  src.onended = () => { if (current && current.src === src) stopPlayback(); };
+  current = { src, el };
+  if (el) el.classList.add('playing');
+  src.start();
+}
+
+const MAX_REC_MS = 8000;
+let recorder = null;
+
+function pickMime() {
+  if (!window.MediaRecorder) return '';
+  const cands = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+  return cands.find((m) => MediaRecorder.isTypeSupported(m)) || '';
+}
+
+async function startRecording(onLevel) {
+  audioCtx();
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+  });
+  const mime = pickMime();
+  const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  const chunks = [];
+  mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+
+  const c = audioCtx();
+  const srcNode = c.createMediaStreamSource(stream);
+  const analyser = c.createAnalyser();
+  analyser.fftSize = 512;
+  srcNode.connect(analyser);
+  const data = new Uint8Array(analyser.fftSize);
+  let raf = 0;
+  const tick = () => {
+    analyser.getByteTimeDomainData(data);
+    let max = 0;
+    for (const v of data) max = Math.max(max, Math.abs(v - 128));
+    onLevel(Math.min(1, max / 90));
+    raf = requestAnimationFrame(tick);
+  };
+  tick();
+
+  const done = new Promise((resolve, reject) => {
+    mr.onstop = async () => {
+      cancelAnimationFrame(raf);
+      srcNode.disconnect();
+      stream.getTracks().forEach((t) => t.stop());
+      try {
+        const blob = new Blob(chunks, { type: mr.mimeType || mime || 'audio/webm' });
+        resolve(trim(await decode(await blob.arrayBuffer())));
+      } catch (err) { reject(err); }
+    };
+  });
+  mr.start();
+  const timer = setTimeout(() => { if (mr.state !== 'inactive') mr.stop(); }, MAX_REC_MS);
+  recorder = { mr, done, timer };
+  return done;
+}
+
+function stopRecording() {
+  if (!recorder) return;
+  clearTimeout(recorder.timer);
+  if (recorder.mr.state !== 'inactive') recorder.mr.stop();
+}
+
+// ---------- Estado ----------
+const store = {
+  get() { try { return JSON.parse(localStorage.getItem('alreves.players')) || null; } catch (_) { return null; } },
+  set(v) { try { localStorage.setItem('alreves.players', JSON.stringify(v)); } catch (_) {} },
+};
+
+const S = {
+  screen: 'setup',
+  names: store.get() || ['Jugador 1', 'Jugador 2'],
+  scores: [],
+  round: 0,
+  word: '',
+  guess: '',
+  orig: null, origRev: null,
+  imit: null, imitRev: null,
+  recording: false,
+  processing: false,
+  error: '',
+  pass: null,
+  correct: false,
+};
+
+const recorderIdx = () => S.round % S.names.length;
+const guesserIdx = () => (S.round + 1) % S.names.length;
+
+function normalize(s) {
+  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zñ0-9]/g, '');
+}
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ---------- Vistas ----------
+const $app = document.getElementById('app');
+
+function playBtn(key, label, cls = '') {
+  return `<button class="${cls}" data-a="play" data-k="${key}">▶ ${label}</button>`;
+}
+
+function recBlock(hasRec) {
+  const label = S.processing ? 'Procesando…' : S.recording ? 'Parar' : hasRec ? 'Grabar de nuevo' : 'Grabar';
+  return `
+    <button class="rec ${S.recording ? 'on' : ''}" data-a="toggleRec" ${S.processing ? 'disabled' : ''}
+      aria-label="${label}">${S.recording ? '■ Parar' : '● ' + label}</button>
+    <div class="meter" aria-hidden="true"><div id="meter"></div></div>
+    ${S.error ? `<p class="err" role="alert">${esc(S.error)}</p>` : ''}`;
+}
+
+const views = {
+  setup() {
+    const rows = S.names.map((n, i) => `
+      <div class="row">
+        <input type="text" data-name="${i}" value="${esc(n)}" maxlength="16" aria-label="Nombre del jugador ${i + 1}">
+        ${S.names.length > 2 ? `<button class="small ghost" data-a="removePlayer" data-i="${i}" aria-label="Quitar jugador ${i + 1}">✕</button>` : ''}
+      </div>`).join('');
+    return `
+      <h1>Al Revés 🔁</h1>
+      <p class="muted">Una palabra, dos vueltas al revés. ¿Se entiende al final?</p>
+      <div class="card">
+        <h2>Jugadores</h2>
+        ${rows}
+        <button class="ghost" data-a="addPlayer" ${S.names.length >= 6 ? 'disabled' : ''}>+ Agregar jugador</button>
+      </div>
+      <div class="card">
+        <h2>Cómo se juega</h2>
+        <p>1. Uno graba una palabra.</p>
+        <p>2. El siguiente la escucha <b>al revés</b> y se graba diciendo exactamente lo que oyó.</p>
+        <p>3. Esa grabación se reproduce <b>al revés</b> y tiene que adivinar la palabra original.</p>
+      </div>
+      <div class="spacer"></div>
+      <button class="primary" data-a="start">Empezar</button>`;
+  },
+
+  pass() {
+    const p = S.pass;
+    return `
+      <div class="spacer"></div>
+      <p class="step center">Pasale el celu</p>
+      <div class="big-word">${esc(p.name)}</div>
+      <p class="center muted">${esc(p.text)}</p>
+      <div class="spacer"></div>
+      <button class="primary" data-a="passDone">Soy ${esc(p.name)}</button>`;
+  },
+
+  word() {
+    return `
+      <p class="step">Ronda ${S.round + 1} · Paso 1 de 3</p>
+      <h2>${esc(S.names[recorderIdx()])}, grabá una palabra</h2>
+      <p class="muted">Escribila (solo para verificar después) y decila en voz alta, sin que te escuchen.</p>
+      <input type="text" id="word" data-bind="word" value="${esc(S.word)}" placeholder="La palabra" autocomplete="off" autocapitalize="off">
+      ${recBlock(!!S.orig)}
+      ${S.orig ? playBtn('orig', 'Escuchar mi grabación', 'ghost') : ''}
+      <div class="spacer"></div>
+      <button class="primary" data-a="wordDone" ${S.orig && normalize(S.word) ? '' : 'disabled'}>Listo, pasar el celu</button>`;
+  },
+
+  imitate() {
+    return `
+      <p class="step">Ronda ${S.round + 1} · Paso 2 de 3</p>
+      <h2>${esc(S.names[guesserIdx()])}, escuchá al revés</h2>
+      <p class="muted">Escuchá todas las veces que quieras y después grabate diciendo <b>exactamente</b> lo que oís, con sus sonidos raros.</p>
+      ${playBtn('origRev', 'Escuchar al revés', 'primary')}
+      ${recBlock(!!S.imit)}
+      <div class="spacer"></div>
+      <button class="primary" data-a="imitDone" ${S.imit ? '' : 'disabled'}>Listo, escuchar mi grabación</button>`;
+  },
+
+  guess() {
+    return `
+      <p class="step">Ronda ${S.round + 1} · Paso 3 de 3</p>
+      <h2>¿Qué palabra era?</h2>
+      <p class="muted">Tu propia grabación, pero al revés. Si lo hiciste bien, debería sonar como la original.</p>
+      ${playBtn('imitRev', 'Escuchar mi grabación al revés', 'primary')}
+      <input type="text" id="guess" data-bind="guess" value="${esc(S.guess)}" placeholder="Tu respuesta" autocomplete="off" autocapitalize="off">
+      <div class="spacer"></div>
+      <button class="ghost" data-a="backToImitate">Volver a grabar</button>
+      <button class="primary" data-a="submitGuess" ${normalize(S.guess) ? '' : 'disabled'}>Responder</button>`;
+  },
+
+  result() {
+    const rows = S.names.map((n, i) => `<tr><td>${esc(n)}</td><td>${S.scores[i]}</td></tr>`).join('');
+    return `
+      <p class="verdict ${S.correct ? 'ok' : 'no'}" role="status">${S.correct ? '¡Acertó! +1 punto' : 'No era esa…'}</p>
+      <div class="card">
+        <p class="muted">La palabra era</p>
+        <div class="big-word">${esc(S.word)}</div>
+        <p class="center">Respuesta: <b>${esc(S.guess)}</b></p>
+      </div>
+      <div class="card">
+        ${playBtn('orig', 'Original')}
+        ${playBtn('origRev', 'Original al revés')}
+        ${playBtn('imit', 'Imitación')}
+        ${playBtn('imitRev', 'Imitación al revés')}
+      </div>
+      <div class="card"><h2>Puntajes</h2><table>${rows}</table></div>
+      <div class="spacer"></div>
+      <button class="primary" data-a="nextRound">Siguiente ronda</button>
+      <button class="ghost" data-a="endGame">Terminar juego</button>`;
+  },
+};
+
+function render() {
+  $app.innerHTML = views[S.screen]();
+  const heading = $app.querySelector('h1, h2, .big-word, .verdict');
+  if (heading) { heading.setAttribute('tabindex', '-1'); }
+}
+
+function go(screen) {
+  stopPlayback();
+  S.screen = screen;
+  S.error = '';
+  render();
+  window.scrollTo(0, 0);
+}
+
+// ---------- Acciones ----------
+function resetRound() {
+  S.word = ''; S.guess = '';
+  S.orig = S.origRev = S.imit = S.imitRev = null;
+  S.correct = false;
+}
+
+function passTo(idx, text, next) {
+  S.pass = { name: S.names[idx], text, next };
+  go('pass');
+}
+
+function startRound() {
+  resetRound();
+  passTo(recorderIdx(), 'Te toca grabar una palabra. Que nadie más escuche.', 'word');
+}
+
+async function toggleRec(kind) {
+  if (S.processing) return;
+  if (S.recording) { stopRecording(); return; }
+  stopPlayback();
+  S.error = '';
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    S.error = 'Este navegador no permite grabar audio.';
+    render();
+    return;
+  }
+  try {
+    const pending = startRecording((lvl) => {
+      const m = document.getElementById('meter');
+      if (m) m.style.width = Math.round(lvl * 100) + '%';
+    });
+    S.recording = true;
+    render();
+    const buf = await pending;
+    S.recording = false;
+    if (kind === 'word') { S.orig = buf; S.origRev = reverse(buf); }
+    else { S.imit = buf; S.imitRev = reverse(buf); }
+  } catch (err) {
+    S.recording = false;
+    S.error = err && err.name === 'NotAllowedError'
+      ? 'Necesito permiso para usar el micrófono.'
+      : 'No pude grabar. Probá de nuevo.';
+  }
+  render();
+}
+
+const actions = {
+  addPlayer() {
+    if (S.names.length < 6) { S.names.push('Jugador ' + (S.names.length + 1)); render(); }
+  },
+  removePlayer(el) {
+    S.names.splice(+el.dataset.i, 1);
+    render();
+  },
+  start() {
+    S.names = S.names.map((n, i) => n.trim() || 'Jugador ' + (i + 1));
+    store.set(S.names);
+    S.scores = S.names.map(() => 0);
+    S.round = 0;
+    startRound();
+  },
+  passDone() { go(S.pass.next); },
+  toggleRec() { toggleRec(S.screen === 'word' ? 'word' : 'imit'); },
+  play(el) { play(S[el.dataset.k], el); },
+  wordDone() {
+    passTo(guesserIdx(), 'Vas a escuchar una palabra al revés. Que nadie más escuche.', 'imitate');
+  },
+  imitDone() { go('guess'); },
+  backToImitate() { go('imitate'); },
+  submitGuess() {
+    S.correct = normalize(S.guess) === normalize(S.word);
+    if (S.correct) S.scores[guesserIdx()]++;
+    go('result');
+  },
+  nextRound() { S.round++; startRound(); },
+  endGame() { S.round = 0; resetRound(); go('setup'); },
+};
+
+$app.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-a]');
+  if (el && actions[el.dataset.a]) actions[el.dataset.a](el);
+});
+
+$app.addEventListener('input', (e) => {
+  const t = e.target;
+  if (t.dataset.name !== undefined) S.names[+t.dataset.name] = t.value;
+  if (t.dataset.bind) {
+    S[t.dataset.bind] = t.value;
+    const btn = $app.querySelector('[data-a="wordDone"], [data-a="submitGuess"]');
+    if (btn) {
+      const ok = normalize(t.value) && (t.dataset.bind === 'guess' || S.orig);
+      btn.disabled = !ok;
+    }
+  }
+});
+
+render();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
